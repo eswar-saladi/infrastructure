@@ -1,0 +1,124 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: CSYE 6225 Assignment 3 IaC
+
+Parameters:
+  VPCCIDR:
+    Description: Please enter the IP range (CIDR notation) for this VPC
+    Type: String
+    Default: 10.192.0.0/16
+
+  SubnetACIDR:
+    Description: Please enter the IP range (CIDR notation) for the public subnet in the first Availability Zone
+    Type: String
+    Default: 10.192.10.0/24
+
+  SubnetBCIDR:
+    Description: Please enter the IP range (CIDR notation) for the public subnet in the second Availability Zone
+    Type: String
+    Default: 10.192.11.0/24
+
+  SubnetCCIDR:
+    Description: Please enter the IP range (CIDR notation) for the private subnet in the first Availability Zone
+    Type: String
+    Default: 10.192.12.0/24
+
+  AvailabilityZoneA:
+    Description: Zone A
+    Type: Number
+    Default: 0
+
+  AvailabilityZoneB:
+    Description: Zone B
+    Type: Number
+    Default: 1
+
+  AvailabilityZoneC:
+    Description: Zone C
+    Type: Number
+    Default: 3
+
+Resources:
+  # vpc
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VPCCIDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Join ["", [!Ref "AWS::StackName", "-VPC"]]
+
+  # connects to public network
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    DependsOn: VPC
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  SubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref SubnetACIDR
+      AvailabilityZone: !Select [0, !GetAZs ] # Get the first AZ in the list
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-Public-A
+
+  SubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref SubnetBCIDR
+      AvailabilityZone: !Select [2, !GetAZs ] # Get the second AZ in the list
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-Public-B
+
+  SubnetC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref SubnetCCIDR
+      AvailabilityZone: !Select [3, !GetAZs ] # Get the second AZ in the list
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-Public-C
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: Public
+
+  PublicRoute1:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  SubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetB
+      RouteTableId: !Ref PublicRouteTable
+
+  SubnetCRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetC
+      RouteTableId: !Ref PublicRouteTable
+
+  SubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetA
+      RouteTableId: !Ref PublicRouteTable
