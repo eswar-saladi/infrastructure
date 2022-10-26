@@ -15,7 +15,7 @@ Parameters:
   AMIId:
     Description: Id of AMI
     Type: String
-    Default: ami-04b0b10aed43278b6
+    Default: ami-0f03f804c14033bdb
 
   RootVolumeSize:
     Description: Volume Size
@@ -35,7 +35,12 @@ Parameters:
   DeleteOnTermin:
     Description: Delete on Termination
     Type: String
-    Default: false
+    Default: true
+
+  AvailabilityZoneA:
+    Description: Zone A
+    Type: Number
+    Default: 0
 
 Resources:
   # vpc
@@ -74,14 +79,17 @@ Resources:
     Properties:
       ImageId: !Ref AMIId
       InstanceType: !Ref InstanceType
-      SubnetId: !Ref SubnetA
-      SecurityGroupIds:
-        - Ref: InstanceSecurityGroup
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: "true"
+          DeviceIndex: "0"
+          GroupSet:
+            - Ref: "InstanceSecurityGroup"
+          SubnetId:
+            Ref: "SubnetA"
       BlockDeviceMappings:
         - DeviceName: /dev/sda1
           Ebs:
             VolumeSize: !Ref RootVolumeSize
-            VolumeType: !Ref RootVolumeType
             DeleteOnTermination: !Ref DeleteOnTermin
 
   InstanceSecurityGroup:
