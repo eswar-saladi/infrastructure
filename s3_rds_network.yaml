@@ -1,0 +1,407 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: CSYE 6225 Assignment 3 IaC
+
+Parameters:
+  VPCCIDR:
+    Description: Please enter the IP range (CIDR notation) for this VPC
+    Type: String
+    Default: 10.192.0.0/16
+
+  SubnetACIDR:
+    Description: Please enter the IP range (CIDR notation) for the public subnet in the first Availability Zone
+    Type: String
+    Default: 10.192.10.0/24
+
+  AMIId:
+    Description: Id of AMI
+    Type: String
+    Default: ami-0855ce05cb66af04e
+
+  RootVolumeSize:
+    Description: Volume Size
+    Type: Number
+    Default: "50"
+
+  RootVolumeType:
+    Description: Volume Type
+    Type: String
+    Default: gp2
+
+  InstanceType:
+    Description: Instance Type
+    Type: String
+    Default: t2.micro
+
+  DeleteOnTermin:
+    Description: Delete on Termination
+    Type: String
+    Default: true
+
+  AvailabilityZoneA:
+    Description: Zone A
+    Type: Number
+    Default: 0
+
+  PrivateSubnet1CIDR:
+    Description: Please enter the IP range (CIDR notation) for the private subnet in the first Availability Zone
+    Type: String
+    Default: 10.192.20.0/24
+
+  PrivateSubnet2CIDR:
+    Description: Please enter the IP range (CIDR notation) for the private subnet in the second Availability Zone
+    Type: String
+    Default: 10.192.21.0/24
+
+  PrivateSubnet3CIDR:
+    Description: Please enter the IP range (CIDR notation) for the private subnet in the second Availability Zone
+    Type: String
+    Default: 10.192.22.0/24
+
+  PrivateAZ1:
+    Description: Private AZ 1
+    Type: Number
+    Default: "0"
+
+  PrivateAZ2:
+    Description: Private AZ 2
+    Type: Number
+    Default: "1"
+
+  PrivateAZ3:
+    Description: Private AZ 3
+    Type: Number
+    Default: "2"
+
+  DatabaseEngine:
+    Description: Databse type to be used
+    Type: String
+    Default: postgres
+
+  DBInstanceClass:
+    Description: Type of db space to be allocated
+    Type: String
+    Default: db.t3.micro
+
+  MultiAZDeployment:
+    Description: Deploy to multiple availability zones
+    Type: String
+    Default: false
+    AllowedValues: [true, false]
+
+  DBInstanceIdentifier:
+    Description: Identifier for the instance
+    Type: String
+    Default: csye6225
+
+  MasterUsername:
+    Description: Master username
+    Type: String
+    Default: csye6225
+
+  MasterPassword:
+    Description: Master password
+    Type: String
+    Default: csye6225
+
+  PublicAccessibility:
+    Description: Public Accessibility
+    Type: String
+    Default: "false"
+    AllowedValues: [true, false]
+
+  DatabaseName:
+    Description: database name
+    Type: String
+    Default: csye6225
+
+Resources:
+  # vpc
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VPCCIDR
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: !Join ["", [!Ref "AWS::StackName", "-VPC"]]
+
+  # connects to public network
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    DependsOn: VPC
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  SubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref SubnetACIDR
+      AvailabilityZone: !Select [!Ref AvailabilityZoneA, !GetAZs ] # Get the first AZ in the list
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-Public-A
+
+  WebAppInstance:
+    Type: "AWS::EC2::Instance"
+    Properties:
+      ImageId: !Ref AMIId
+      InstanceType: !Ref InstanceType
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeviceIndex: "0"
+          GroupSet: [!Ref InstanceSecurityGroup]
+          SubnetId: !Ref SubnetA
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: !Ref RootVolumeSize
+            DeleteOnTermination: !Ref DeleteOnTermin
+      IamInstanceProfile: !Ref S3EC2InstanceProfile
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          cd webapp
+
+          echo "NODE_ENV=production\nAWS_BUCKET=${AWS::StackName}-s3\nDATABASE_URL=postgresql://${!Ref MasterUsername}:${!Ref MasterPassword}@${DBinstance.Endpoint.Address}:5432/${!Ref DatabaseName}" >> .env
+          npx knex migrate:latest
+          sudo systemctl daemon-reload
+          sudo systemctl enable webapp.service
+
+  S3EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: s3-ec2-instance-profile
+      Path: /
+      Roles:
+        - !Ref S3EC2InstanceRole
+
+  S3EC2InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: s3-ec2-instance-role
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Path: /
+
+  EC2InstanceS3Policy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: DemoS3Policy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:*
+            Resource:
+              - !Sub arn:aws:s3:::${EncryptedS3Bucket}
+              - !Sub arn:aws:s3:::${EncryptedS3Bucket}/*
+
+      Roles:
+        - !Ref S3EC2InstanceRole
+
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: "application"
+      GroupDescription: "Allow HTTP/HTTPS and SSH and port 8080"
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          CidrIp: 0.0.0.0/0
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: Public
+
+  PublicRoute1:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  SubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetA
+      RouteTableId: !Ref PublicRouteTable
+
+  EncryptedS3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Join ["", [!Ref "AWS::StackName", "-s3"]]
+      LifecycleConfiguration:
+        Rules:
+          - Id: TransitionRule
+            Status: Enabled
+            Transitions:
+              - TransitionInDays: 30
+                StorageClass: STANDARD_IA
+    DeletionPolicy: Delete
+
+  # Database
+  DbSubnetGroup:
+    Type: "AWS::RDS::DBSubnetGroup"
+    Properties:
+      DBSubnetGroupName: "subnetgroup"
+      DBSubnetGroupDescription: "Subnet Group"
+      SubnetIds:
+        - !Ref "PrivateSubnet1"
+        - !Ref "PrivateSubnet2"
+        - !Ref "PrivateSubnet3"
+
+  DBEC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: "database"
+      VpcId: !Ref VPC
+      GroupDescription: "Allow postgres inbound traffic"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref InstanceSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName} DB Security Group
+
+  DBParamGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Description: "Postgres custom parameters" # Required
+      Family: postgres13 # Required
+      Parameters:
+        log_statement: "all"
+
+  DBinstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceClass: !Ref DBInstanceClass
+      Engine: !Ref DatabaseEngine
+      MasterUsername: !Ref MasterUsername
+      MasterUserPassword: !Ref MasterPassword
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      MultiAZ: !Ref MultiAZDeployment
+      PubliclyAccessible: !Ref PublicAccessibility
+      DBName: !Ref DatabaseName
+      DBInstanceIdentifier: !Ref DBInstanceIdentifier
+      DBParameterGroupName: !Ref DBParamGroup
+      AllocatedStorage: "5"
+      VPCSecurityGroups:
+        - !Ref DBEC2SecurityGroup
+    DeletionPolicy: "Snapshot"
+
+  # Private Subnets
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [!Ref PrivateAZ1, !GetAZs ""]
+      CidrBlock: !Ref PrivateSubnet1CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName} Private Subnet (AZ1)
+
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [!Ref PrivateAZ2, !GetAZs ""]
+      CidrBlock: !Ref PrivateSubnet2CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName} Private Subnet (AZ2)
+
+  PrivateSubnet3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !Select [!Ref PrivateAZ3, !GetAZs ""]
+      CidrBlock: !Ref PrivateSubnet3CIDR
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName} Private Subnet (AZ3)
+
+  # Private Route Table
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName} Private Routes (AZ)
+
+  # Private route table associations
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet1
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet2
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnet3RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet3
+      RouteTableId: !Ref PrivateRouteTable
+
+  DefaultPrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGatewayEIP.AllocationId
+      SubnetId: !Ref SubnetA
+
+  NatGatewayEIP:
+    Type: AWS::EC2::EIP
+    DependsOn: AttachGateway
+    Properties:
+      Domain: vpc
