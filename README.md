@@ -20,6 +20,10 @@ Update stack
 aws cloudformation create-stack --stack-name myvpc --template-body file://s3_rds_network.yaml --profile devuser --capabilities CAPABILITY_NAMED_IAM
 ```
 
-aws cloudformation create-stack --stack-name myvpc2 --template-body file://s3_rds_network.yaml --profile devuser --capabilities CAPABILITY_NAMED_IAM
 
-aws cloudformation create-stack --stack-name myvpc3 --template-body file://s3_rds_network.yaml --profile devuser --capabilities CAPABILITY_NAMED_IAM
+aws cloudformation update-stack --stack-name myvpc2 --template-body file://s3_rds_network.yaml --profile devuser --capabilities CAPABILITY_NAMED_IAM
+
+aws cloudformation update-stack --stack-name myvpc3 --template-body file://s3_rds_network.yaml --profile devuser --capabilities CAPABILITY_NAMED_IAM
+
+aws cloudformation delete-stack --stack-name myvpc3
+
