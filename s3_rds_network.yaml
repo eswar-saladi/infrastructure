@@ -17,6 +17,7 @@ Parameters:
     Type: String
     Default: ami-0c686fba49e229b02
 
+
   RootVolumeSize:
     Description: Volume Size
     Type: Number
