@@ -15,8 +15,7 @@ Parameters:
   AMIId:
     Description: Id of AMI
     Type: String
-    Default: ami-0c686fba49e229b02
-
+    Default: ami-02fe80b45e459e663
 
   RootVolumeSize:
     Description: Volume Size
@@ -99,6 +98,11 @@ Parameters:
     Type: String
     Default: csye6225
 
+  HostedZoneName:
+    Description: Name of the hosted zone
+    Type: String
+    Default: dev.hackerboard.xyz.
+
   MasterPassword:
     Description: Master password
     Type: String
@@ -168,10 +172,11 @@ Resources:
         Fn::Base64: !Sub |
           #!/bin/bash
           cd home/ubuntu/webapp
-          echo -e "NODE_ENV=production\nAWS_BUCKET=${AWS::StackName}-s3\nDATABASE_URL=postgresql://${MasterUsername}:${MasterPassword}@${DBinstance.Endpoint.Address}:5432/${DatabaseName}\n" >> .env
+          echo -e "NODE_ENV=production\nAWS_BUCKET=${AWS::StackName}-s3\nDATABASE_URL=postgresql://${MasterUsername}:${MasterPassword}@${DBinstance.Endpoint.Address}:5432/${DatabaseName}\nPORT=80\n" >> .env
           npx knex migrate:latest
           sudo systemctl daemon-reload
           sudo systemctl enable webapp.service
+          sudo iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-ports 3000
 
   S3EC2InstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -305,6 +310,17 @@ Resources:
       Family: postgres13 # Required
       Parameters:
         log_statement: "all"
+
+  DnsRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneName: !Ref "HostedZoneName"
+      Comment: DNS name for my instance.
+      Name: !Ref "HostedZoneName"
+      Type: A
+      TTL: "900"
+      ResourceRecords:
+        - !GetAtt WebAppInstance.PublicIp
 
   DBinstance:
     Type: AWS::RDS::DBInstance
