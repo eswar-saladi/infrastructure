@@ -154,6 +154,17 @@ Resources:
 
   WebAppInstance:
     Type: "AWS::EC2::Instance"
+    Metadata:
+      AWS::CloudFormation::Init:
+        configSets:
+          default:
+            - 01_setupCfnHup
+            - 02_config-amazon-cloudwatch-agent
+            - 03_restart_amazon-cloudwatch-agent
+          UpdateEnvironment:
+            - 02_config-amazon-cloudwatch-agent
+            - 03_restart_amazon-cloudwatch-agent
+
     Properties:
       ImageId: !Ref AMIId
       InstanceType: !Ref InstanceType
@@ -172,7 +183,7 @@ Resources:
         Fn::Base64: !Sub |
           #!/bin/bash
           cd home/ubuntu/webapp
-          echo -e "NODE_ENV=production\nAWS_BUCKET=${AWS::StackName}-s3\nDATABASE_URL=postgresql://${MasterUsername}:${MasterPassword}@${DBinstance.Endpoint.Address}:5432/${DatabaseName}\nPORT=80\n" >> .env
+          echo -e "NODE_ENV=production\nAWS_BUCKET=${AWS::StackName}-s3\nDATABASE_URL=postgresql://${MasterUsername}:${MasterPassword}@${DBinstance.Endpoint.Address}:5432/${DatabaseName}\nPORT=3000\n" >> .env
           npx knex migrate:latest
           sudo systemctl daemon-reload
           sudo systemctl enable webapp.service
