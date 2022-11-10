@@ -15,7 +15,7 @@ Parameters:
   AMIId:
     Description: Id of AMI
     Type: String
-    Default: ami-02fe80b45e459e663
+    Default: ami-085affae25f0b66ec
 
   RootVolumeSize:
     Description: Volume Size
@@ -154,17 +154,6 @@ Resources:
 
   WebAppInstance:
     Type: "AWS::EC2::Instance"
-    Metadata:
-      AWS::CloudFormation::Init:
-        configSets:
-          default:
-            - 01_setupCfnHup
-            - 02_config-amazon-cloudwatch-agent
-            - 03_restart_amazon-cloudwatch-agent
-          UpdateEnvironment:
-            - 02_config-amazon-cloudwatch-agent
-            - 03_restart_amazon-cloudwatch-agent
-
     Properties:
       ImageId: !Ref AMIId
       InstanceType: !Ref InstanceType
@@ -187,7 +176,10 @@ Resources:
           npx knex migrate:latest
           sudo systemctl daemon-reload
           sudo systemctl enable webapp.service
+          sudo systemctl start webapp.service
           sudo iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-ports 3000
+          sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/home/ubuntu/webapp/cloudwatch-config.json -s
+          sudo systemctl restart webapp.service
 
   S3EC2InstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -211,6 +203,8 @@ Resources:
             Action:
               - sts:AssumeRole
       Path: /
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
 
   EC2InstanceS3Policy:
     Type: AWS::IAM::Policy
