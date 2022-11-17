@@ -15,7 +15,7 @@ Parameters:
   AMIId:
     Description: Id of AMI
     Type: String
-    Default: ami-085affae25f0b66ec
+    Default: ami-0d28a08f7d7ea47a6
 
   RootVolumeSize:
     Description: Volume Size
@@ -101,7 +101,7 @@ Parameters:
   HostedZoneName:
     Description: Name of the hosted zone
     Type: String
-    Default: dev.hackerboard.xyz.
+    Default: prod.hackerboard.xyz.
 
   MasterPassword:
     Description: Master password
@@ -172,7 +172,7 @@ Resources:
         Fn::Base64: !Sub |
           #!/bin/bash
           cd home/ubuntu/webapp
-          echo -e "NODE_ENV=production\nAWS_BUCKET=${AWS::StackName}-s3\nDATABASE_URL=postgresql://${MasterUsername}:${MasterPassword}@${DBinstance.Endpoint.Address}:5432/${DatabaseName}\nPORT=3000\nSNS_TOPIC_ARN=${!Ref SNSTopic}" >> .env
+          echo -e "NODE_ENV=production\nAWS_BUCKET=${AWS::StackName}-s3\nDATABASE_URL=postgresql://${MasterUsername}:${MasterPassword}@${DBinstance.Endpoint.Address}:5432/${DatabaseName}\nPORT=3000\nSNS_TOPIC_ARN=${SNSTopic}\n" >> .env
           npx knex migrate:latest
           sudo systemctl daemon-reload
           sudo systemctl enable webapp.service
@@ -205,6 +205,7 @@ Resources:
       Path: /
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+        - arn:aws:iam::aws:policy/AmazonSNSFullAccess
 
   EC2InstanceS3Policy:
     Type: AWS::IAM::Policy
@@ -229,7 +230,9 @@ Resources:
               - dynamodb:Delete
               - dynamodb:Update
               - dynamodb:PutItem
-            Resource: !Ref DynamoDBTable
+            Resource: !GetAtt DynamoDBTable.Arn
+      Roles:
+        - !Ref S3EC2InstanceRole
 
   DynamoDBTable:
     Type: AWS::DynamoDB::Table
@@ -237,13 +240,11 @@ Resources:
       AttributeDefinitions:
         - AttributeName: "id"
           AttributeType: "S"
-        - AttributeName: "token"
-          AttributeType: "S"
-        - AttributeName: "expiry"
-          AttributeType: "N"
+
       KeySchema:
         - AttributeName: "id"
           KeyType: "HASH"
+
       ProvisionedThroughput:
         ReadCapacityUnits: "1"
         WriteCapacityUnits: "1"
@@ -280,10 +281,6 @@ Resources:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource: arn:aws:logs:::*
-        - PolicyName: APIPolicy
-          PolicyDocument:
-            Version: 2012-10-17
-            Statement:
               - Effect: Allow
                 Action:
                   - "dynamodb:PutItem"
@@ -296,15 +293,16 @@ Resources:
     Type: AWS::Lambda::Function
     Properties:
       FunctionName: lambda-function
-      Runtime: nodejs14
+      Runtime: nodejs16.x
       Code:
-        S3Bucket: "webapp-bucket"
+        S3Bucket: "serverless12-bucket1"
+        S3Key: "serverless.zip"
       Handler: index.handler
       Timeout: 600
       MemorySize: 1024
       EphemeralStorage:
         Size: 1024
-      Role: !Ref LambdaRole
+      Role: !GetAtt LambdaRole.Arn
 
   LambdaFunctionPermission:
     Type: AWS::Lambda::Permission
@@ -318,14 +316,14 @@ Resources:
     Type: AWS::SNS::Topic
     Properties:
       Subscription:
-        - Endpoint: !Ref Lambda
+        - Endpoint: !GetAtt Lambda.Arn
           Protocol: lambda
       TopicName: "csye6225-sns"
 
   Subscription:
     Type: AWS::SNS::Subscription
     Properties:
-      Endpoint: !Ref Lambda
+      Endpoint: !GetAtt Lambda.Arn
       Protocol: "lambda"
       TopicArn: !Ref SNSTopic
 
