@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: CSYE 6225 Assignment 3 IaC
+Description: CSYE 6225 Assignment 9 IaC
 
 Parameters:
   VPCCIDR:
@@ -12,10 +12,20 @@ Parameters:
     Type: String
     Default: 10.192.10.0/24
 
+  SubnetBCIDR:
+    Description: Please enter the IP range (CIDR notation) for the public subnet in the first Availability Zone
+    Type: String
+    Default: 10.192.11.0/24
+
+  SubnetCCIDR:
+    Description: Please enter the IP range (CIDR notation) for the public subnet in the first Availability Zone
+    Type: String
+    Default: 10.192.12.0/24
+
   AMIId:
     Description: Id of AMI
     Type: String
-    Default: ami-0d28a08f7d7ea47a6
+    Default: ami-02e4fbc01848daba7
 
   RootVolumeSize:
     Description: Volume Size
@@ -41,6 +51,16 @@ Parameters:
     Description: Zone A
     Type: Number
     Default: 0
+
+  AvailabilityZoneB:
+    Description: Zone B
+    Type: Number
+    Default: 1
+
+  AvailabilityZoneC:
+    Description: Zone C
+    Type: Number
+    Default: 2
 
   PrivateSubnet1CIDR:
     Description: Please enter the IP range (CIDR notation) for the private subnet in the first Availability Zone
@@ -119,6 +139,32 @@ Parameters:
     Type: String
     Default: csye6225
 
+  HostedZoneID:
+    Type: String
+    Description: The DNS ID of an existing Amazon Route 53 hosted zone
+    Default: Z05682821BE9XJSTV8DU4
+
+  AutoScalingGroupMinSize:
+    Type: Number
+    Default: 1
+    Description: Enter the Min Size for the ASG
+  AutoScalingGroupMaxSize:
+    Type: Number
+    Default: 3
+    Description: Enter the Max Size for the ASG
+  AutoScalingGroupDesiredCapacity:
+    Type: Number
+    Default: 1
+    Description: Enter the Max Size for the ASG
+  ThumbprintList:
+    Type: String
+    Default: 6938fd4d98bab03faadb97b34396831e3780aea1
+    Description: A thumbprint of an Open ID Connector is a SHA1 hash of the public certificate of the host
+  GithubRepoName:
+    Type: String
+    Description: GitHub repository name Ex-TestUser/TestCodeDeploy
+    Default: eswar-saladi/webapp
+
 Resources:
   # vpc
   VPC:
@@ -152,34 +198,61 @@ Resources:
         - Key: Name
           Value: !Sub ${AWS::StackName}-Public-A
 
-  WebAppInstance:
-    Type: "AWS::EC2::Instance"
+  SubnetB:
+    Type: AWS::EC2::Subnet
     Properties:
-      ImageId: !Ref AMIId
-      InstanceType: !Ref InstanceType
-      NetworkInterfaces:
-        - AssociatePublicIpAddress: true
-          DeviceIndex: "0"
-          GroupSet: [!Ref InstanceSecurityGroup]
-          SubnetId: !Ref SubnetA
-      BlockDeviceMappings:
-        - DeviceName: /dev/sda1
-          Ebs:
-            VolumeSize: !Ref RootVolumeSize
-            DeleteOnTermination: !Ref DeleteOnTermin
-      IamInstanceProfile: !Ref S3EC2InstanceProfile
-      UserData:
-        Fn::Base64: !Sub |
-          #!/bin/bash
-          cd home/ubuntu/webapp
-          echo -e "NODE_ENV=production\nAWS_BUCKET=${AWS::StackName}-s3\nDATABASE_URL=postgresql://${MasterUsername}:${MasterPassword}@${DBinstance.Endpoint.Address}:5432/${DatabaseName}\nPORT=3000\nSNS_TOPIC_ARN=${SNSTopic}\n" >> .env
-          npx knex migrate:latest
-          sudo systemctl daemon-reload
-          sudo systemctl enable webapp.service
-          sudo systemctl start webapp.service
-          sudo iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-ports 3000
-          sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/home/ubuntu/webapp/cloudwatch-config.json -s
-          sudo systemctl restart webapp.service
+      VpcId: !Ref VPC
+      CidrBlock: !Ref SubnetBCIDR
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [!Ref AvailabilityZoneB, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-Public-B
+
+  SubnetC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: !Ref SubnetCCIDR
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [!Ref AvailabilityZoneC, !GetAZs ""]
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-Public-C
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: Public
+
+  PublicRoute1:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  SubnetARouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetA
+      RouteTableId: !Ref PublicRouteTable
+
+  SubnetBRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetB
+      RouteTableId: !Ref PublicRouteTable
+
+  SubnetCRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetC
+      RouteTableId: !Ref PublicRouteTable
 
   S3EC2InstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -200,12 +273,106 @@ Resources:
             Principal:
               Service:
                 - ec2.amazonaws.com
+                - codedeploy.amazonaws.com
             Action:
               - sts:AssumeRole
       Path: /
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
         - arn:aws:iam::aws:policy/AmazonSNSFullAccess
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: "allow-webapp-deployment-bucket-policy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "s3:getObject"
+                Resource: !Sub arn:${AWS::Partition}:s3:::${WebappDeploymentBucket}/*
+
+  IDCProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: "https://token.actions.githubusercontent.com"
+      ClientIdList:
+        - "sts.amazonaws.com"
+      ThumbprintList:
+        - !Ref ThumbprintList
+
+  GitHubIAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: "/"
+      RoleName: CodeDeployRoleforGitHub
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Action: sts:AssumeRoleWithWebIdentity
+            Principal:
+              Federated: !Ref IDCProvider
+            Condition:
+              StringLike:
+                token.actions.githubusercontent.com:sub: !Sub repo:${GithubRepoName}:*
+      MaxSessionDuration: 3600
+      Description: "Github Actions role"
+      Policies:
+        - PolicyName: "CodeDeployRoleforGitHub-policy"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - "codedeploy:Get*"
+                  - "codedeploy:Batch*"
+                  - "codedeploy:CreateDeployment"
+                  - "codedeploy:RegisterApplicationRevision"
+                  - "codedeploy:List*"
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:codedeploy:*:${AWS::AccountId}:*"
+              - Effect: Allow
+                Action:
+                  - "s3:putObject"
+                Resource: !Sub arn:${AWS::Partition}:s3:::${WebappDeploymentBucket}/*
+
+  WebappApplication:
+    Type: AWS::CodeDeploy::Application
+    Properties:
+      ApplicationName: CodeDeployAppNameWithASG
+
+  WebappDeploymentGroup:
+    Type: AWS::CodeDeploy::DeploymentGroup
+    Properties:
+      ApplicationName: !Ref WebappApplication
+      ServiceRoleArn: !GetAtt CodeDeployRole.Arn
+      DeploymentConfigName: CodeDeployDefault.OneAtATime
+      DeploymentGroupName: CodeDeployGroupName
+      AutoRollbackConfiguration:
+        Enabled: true
+        Events:
+          - DEPLOYMENT_FAILURE
+          - DEPLOYMENT_STOP_ON_REQUEST
+
+      AutoScalingGroups:
+        - !Ref AutoScalingGroup
+
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: allow access to ALB from internet
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
 
   EC2InstanceS3Policy:
     Type: AWS::IAM::Policy
@@ -335,43 +502,17 @@ Resources:
       VpcId: !Ref VPC
       SecurityGroupIngress:
         - IpProtocol: tcp
-          FromPort: 80
-          ToPort: 80
-          CidrIp: 0.0.0.0/0
-        - IpProtocol: tcp
-          FromPort: 443
-          ToPort: 443
-          CidrIp: 0.0.0.0/0
-        - IpProtocol: tcp
           FromPort: 22
           ToPort: 22
           CidrIp: 0.0.0.0/0
         - IpProtocol: tcp
           FromPort: 3000
           ToPort: 3000
+          SourceSecurityGroupId:
+            Ref: ALBSecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
           CidrIp: 0.0.0.0/0
-
-  PublicRouteTable:
-    Type: AWS::EC2::RouteTable
-    Properties:
-      VpcId: !Ref VPC
-      Tags:
-        - Key: Name
-          Value: Public
-
-  PublicRoute1:
-    Type: AWS::EC2::Route
-    DependsOn: AttachGateway
-    Properties:
-      RouteTableId: !Ref PublicRouteTable
-      DestinationCidrBlock: 0.0.0.0/0
-      GatewayId: !Ref InternetGateway
-
-  SubnetARouteTableAssociation:
-    Type: AWS::EC2::SubnetRouteTableAssociation
-    Properties:
-      SubnetId: !Ref SubnetA
-      RouteTableId: !Ref PublicRouteTable
 
   EncryptedS3Bucket:
     Type: AWS::S3::Bucket
@@ -421,19 +562,22 @@ Resources:
         log_statement: "all"
 
   DnsRecord:
-    Type: AWS::Route53::RecordSet
+    Type: AWS::Route53::RecordSetGroup
     Properties:
-      HostedZoneName: !Ref "HostedZoneName"
+      HostedZoneId: !Ref "HostedZoneID"
       Comment: DNS name for my instance.
-      Name: !Ref "HostedZoneName"
-      Type: A
-      TTL: "900"
-      ResourceRecords:
-        - !GetAtt WebAppInstance.PublicIp
+      RecordSets:
+        - Name: !Ref HostedZoneName
+          Type: A
+          AliasTarget:
+            HostedZoneId: !GetAtt "ApplicationLoadBalancer.CanonicalHostedZoneID"
+            DNSName: !GetAtt "ApplicationLoadBalancer.DNSName"
 
   DBinstance:
     Type: AWS::RDS::DBInstance
     Properties:
+      StorageEncrypted: true
+      KmsKeyId: !Ref RdsKey
       DBInstanceClass: !Ref DBInstanceClass
       Engine: !Ref DatabaseEngine
       MasterUsername: !Ref MasterUsername
@@ -530,3 +674,282 @@ Resources:
     DependsOn: AttachGateway
     Properties:
       Domain: vpc
+
+  WebappDeploymentBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-deploymentbucket"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  CodeDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "codedeploy.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: "/"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSCodeDeployRole
+      Policies:
+        - PolicyName: allow-autoscaling
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ec2:RunInstances
+                  - ec2:CreateTags
+                  - iam:PassRole
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:codedeploy:*:${AWS::AccountId}:*"
+
+  AutoScalingGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      AvailabilityZones:
+        - us-east-1a
+        - us-east-1b
+        - us-east-1c
+      HealthCheckType: ELB
+      HealthCheckGracePeriod: 300
+      DesiredCapacity: !Ref AutoScalingGroupDesiredCapacity
+      MinSize: !Ref AutoScalingGroupMinSize
+      MaxSize: !Ref AutoScalingGroupMaxSize
+      LaunchTemplate:
+        LaunchTemplateId: !Ref WebappLaunchConfig
+        Version: !GetAtt WebappLaunchConfig.LatestVersionNumber
+      Cooldown: "60"
+      VPCZoneIdentifier:
+        - !Ref SubnetA
+        - !Ref SubnetB
+        - !Ref SubnetC
+      TargetGroupARNs:
+        - !Ref ALBTargetGroup
+      Tags:
+        - Key: Application
+          Value: WebApp
+          PropagateAtLaunch: "true"
+        - Key: Name
+          Value: webapp-example
+          PropagateAtLaunch: true
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      Certificates:
+        - CertificateArn: arn:aws:acm:us-east-1:741317267067:certificate/32a2ef49-7988-483e-8f74-a9b418a6cc7b
+
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port: 443
+      Protocol: HTTPS
+
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    DependsOn:
+      - AttachGateway
+      - WebappLaunchConfig
+    Properties:
+      Scheme: internet-facing
+      Subnets:
+        - !Ref SubnetA
+        - !Ref SubnetB
+        - !Ref SubnetC
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+    Tags:
+      - Key: Application
+        Value: WebApp
+      - Key: Name
+        Value: !Sub ${AWS::StackName}-load-balancer
+        Type: application
+
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 120
+      UnhealthyThresholdCount: 2
+      HealthyThresholdCount: 2
+      HealthCheckPath: "/healthz"
+      Port: 3000
+      Protocol: HTTP
+      VpcId: !Ref VPC
+
+  WebappLaunchConfig:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: !Sub "${AWS::StackName}-launch-template"
+      LaunchTemplateData:
+        NetworkInterfaces:
+          - DeviceIndex: 0
+            AssociatePublicIpAddress: true
+            Groups:
+              - !Ref InstanceSecurityGroup
+            DeleteOnTermination: true
+        ImageId: !Ref AMIId
+        InstanceType: !Ref InstanceType
+        IamInstanceProfile:
+          Arn: !GetAtt S3EC2InstanceProfile.Arn
+        BlockDeviceMappings:
+          - DeviceName: /dev/sda1
+            Ebs:
+              VolumeSize: !Ref RootVolumeSize
+              DeleteOnTermination: !Ref DeleteOnTermin
+              Encrypted: True
+              KmsKeyId: !Ref EBSKey
+        UserData:
+          Fn::Base64: !Sub |
+            #!/bin/bash
+            cd home/ubuntu/webapp
+            echo -e "NODE_ENV=production\nAWS_BUCKET=${AWS::StackName}-s3\nDATABASE_URL=postgresql://${MasterUsername}:${MasterPassword}@${DBinstance.Endpoint.Address}:5432/${DatabaseName}\nPORT=3000\nSNS_TOPIC_ARN=${SNSTopic}\n" >> .env
+            npx knex migrate:latest
+            sudo systemctl daemon-reload
+            sudo systemctl enable webapp.service
+            sudo systemctl start webapp.service
+            sudo iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-ports 3000
+            sudo /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a fetch-config -m ec2 -c file:/home/ubuntu/webapp/cloudwatch-config.json -s
+            sudo systemctl restart webapp.service
+
+  RdsKey:
+    Type: AWS::KMS::Key
+    Properties:
+      KeyPolicy:
+        Version: 2012-10-17
+        Id: key-rds
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Join
+                - ""
+                - - "arn:aws:iam::"
+                  - !Ref "AWS::AccountId"
+                  - ":root"
+            Action: "kms:*"
+            Resource: "*"
+
+  EBSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      KeyPolicy:
+        Version: 2012-10-17
+        Id: key-ebs
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Join
+                - ""
+                - - "arn:aws:iam::"
+                  - !Ref "AWS::AccountId"
+                  - ":root"
+
+            Action: "kms:*"
+            Resource: "*"
+          - Sid: Enable Autoscalling
+            Effect: Allow
+            Principal:
+              AWS: !Join
+                - ""
+                - - "arn:aws:iam::"
+                  - !Ref "AWS::AccountId"
+                  - ":role/aws-service-role/autoscaling.amazonaws.com/AWSServiceRoleForAutoScaling"
+            Action:
+              - "kms:Encrypt"
+              - "kms:Decrypt"
+              - "kms:ReEncrypt*"
+              - "kms:GenerateDataKey*"
+              - "kms:DescribeKey"
+              - kms:CreateGrant
+            Resource: "*"
+
+  WebServerScaleUpPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AdjustmentType: ChangeInCapacity
+      AutoScalingGroupName:
+        Ref: AutoScalingGroup
+      Cooldown: "60"
+      ScalingAdjustment: "1"
+
+  WebServerScaleDownPolicy:
+    Type: AWS::AutoScaling::ScalingPolicy
+    Properties:
+      AdjustmentType: ChangeInCapacity
+      AutoScalingGroupName:
+        Ref: AutoScalingGroup
+      Cooldown: "60"
+      ScalingAdjustment: "-1"
+
+  CPUAlarmHigh:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Scale-up if CPU > 5% for 1 minute
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: "60"
+      EvaluationPeriods: "1"
+      Threshold: "5"
+      AlarmActions:
+        - Ref: WebServerScaleUpPolicy
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value:
+            Ref: AutoScalingGroup
+      ComparisonOperator: GreaterThanThreshold
+  CPUAlarmLow:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Scale-down if CPU < 3% for 1 minute
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: "60"
+      EvaluationPeriods: "1"
+      Threshold: "3"
+      AlarmActions:
+        - Ref: WebServerScaleDownPolicy
+      Dimensions:
+        - Name: AutoScalingGroupName
+          Value:
+            Ref: AutoScalingGroup
+      ComparisonOperator: LessThanThreshold
+
+Outputs:
+  WebappUrl:
+    Description: Webapp URL
+    Value:
+      Fn::Join:
+        - ""
+        - - https://
+          - !GetAtt ApplicationLoadBalancer.DNSName
+  DeploymentGroup:
+    Description: Webapp Deployment Group
+    Value: !Ref WebappDeploymentGroup
+  DeploymentBucket:
+    Description: Deployment bucket
+
+    Value: !Ref WebappDeploymentBucket
+  ApplicationName:
+    Description: CodeDeploy Application name
+    Value: !Ref WebappApplication
+  GithubIAMRoleArn:
+    Description: IAM role for GitHub
+    Value: !GetAtt GitHubIAMRole.Arn
